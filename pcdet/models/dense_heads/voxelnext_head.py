@@ -93,7 +93,7 @@ class VoxelNeXtHead(nn.Module):
             cur_head_dict['hm'] = dict(out_channels=len(cur_class_names), num_conv=self.model_cfg.NUM_HM_CONV)
             self.heads_list.append(
                 SeparateHead(
-                    input_channels=self.model_cfg.get('SHARED_CONV_CHANNEL', 128),
+                    input_channels=self.model_cfg.get('SHARED_CONV_CHANNEL', 16),
                     sep_head_dict=cur_head_dict,
                     kernel_size=kernel_size_head,
                     init_bias=-2.19,

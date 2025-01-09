@@ -1,6 +1,8 @@
 import os
 import subprocess
 
+os.environ['CUDA_HOME'] = '/usr/local'  # Set this to your CUDA 10.1 installation path
+
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
@@ -17,10 +19,15 @@ def get_git_commit_number():
 def make_cuda_ext(name, module, sources):
     cuda_ext = CUDAExtension(
         name='%s.%s' % (module, name),
-        sources=[os.path.join(*module.split('.'), src) for src in sources]
+        sources=[os.path.join(*module.split('.'), src) for src in sources],
+        extra_compile_args={
+            'cxx': [],
+            'nvcc': ['-arch=sm_60']  # Adjust this based on your GPU architecture
+        },
+        include_dirs=['/usr/include'],  # CUDA headers are likely here
+        library_dirs=['/lib/x86_64-linux-gnu']  # CUDA libraries are here
     )
     return cuda_ext
-
 
 def write_version_to_file(version, target_file):
     with open(target_file, 'w') as f:

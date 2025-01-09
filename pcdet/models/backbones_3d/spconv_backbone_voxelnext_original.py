@@ -72,10 +72,9 @@ class VoxelResBackBone8xVoxelNeXt(nn.Module):
         self.model_cfg = model_cfg
         norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
 
-        # Reduced channels for a smaller model
         spconv_kernel_sizes = model_cfg.get('SPCONV_KERNEL_SIZES', [3, 3, 3, 3])
-        channels = model_cfg.get('CHANNELS', [8, 16, 32, 32])  # reduced
-        out_channel = model_cfg.get('OUT_CHANNEL', 32)         # reduced
+        channels = model_cfg.get('CHANNELS', [16, 32, 64, 128, 128])
+        out_channel = model_cfg.get('OUT_CHANNEL', 128)
 
         self.sparse_shape = grid_size[::-1] + [1, 0, 0]
 
@@ -92,33 +91,42 @@ class VoxelResBackBone8xVoxelNeXt(nn.Module):
         )
 
         self.conv2 = spconv.SparseSequential(
-            block(channels[0], channels[1], spconv_kernel_sizes[0], norm_fn=norm_fn, stride=2,
-                  padding=int(spconv_kernel_sizes[0]//2), indice_key='spconv2', conv_type='spconv'),
+            # [1600, 1408, 41] <- [800, 704, 21]
+            block(channels[0], channels[1], spconv_kernel_sizes[0], norm_fn=norm_fn, stride=2, padding=int(spconv_kernel_sizes[0]//2), indice_key='spconv2', conv_type='spconv'),
             SparseBasicBlock(channels[1], channels[1], norm_fn=norm_fn, indice_key='res2'),
             SparseBasicBlock(channels[1], channels[1], norm_fn=norm_fn, indice_key='res2'),
         )
 
         self.conv3 = spconv.SparseSequential(
-            block(channels[1], channels[2], spconv_kernel_sizes[1], norm_fn=norm_fn, stride=2,
-                  padding=int(spconv_kernel_sizes[1]//2), indice_key='spconv3', conv_type='spconv'),
+            # [800, 704, 21] <- [400, 352, 11]
+            block(channels[1], channels[2], spconv_kernel_sizes[1], norm_fn=norm_fn, stride=2, padding=int(spconv_kernel_sizes[1]//2), indice_key='spconv3', conv_type='spconv'),
             SparseBasicBlock(channels[2], channels[2], norm_fn=norm_fn, indice_key='res3'),
             SparseBasicBlock(channels[2], channels[2], norm_fn=norm_fn, indice_key='res3'),
         )
 
         self.conv4 = spconv.SparseSequential(
-            block(channels[2], channels[3], spconv_kernel_sizes[2], norm_fn=norm_fn, stride=2,
-                  padding=int(spconv_kernel_sizes[2]//2), indice_key='spconv4', conv_type='spconv'),
+            # [400, 352, 11] <- [200, 176, 6]
+            block(channels[2], channels[3], spconv_kernel_sizes[2], norm_fn=norm_fn, stride=2, padding=int(spconv_kernel_sizes[2]//2), indice_key='spconv4', conv_type='spconv'),
             SparseBasicBlock(channels[3], channels[3], norm_fn=norm_fn, indice_key='res4'),
             SparseBasicBlock(channels[3], channels[3], norm_fn=norm_fn, indice_key='res4'),
         )
 
-        # conv5 and conv6 removed for a smaller network
-
+        self.conv5 = spconv.SparseSequential(
+            # [200, 176, 6] <- [100, 88, 3]
+            block(channels[3], channels[4], spconv_kernel_sizes[3], norm_fn=norm_fn, stride=2, padding=int(spconv_kernel_sizes[3]//2), indice_key='spconv5', conv_type='spconv'),
+            SparseBasicBlock(channels[4], channels[4], norm_fn=norm_fn, indice_key='res5'),
+            SparseBasicBlock(channels[4], channels[4], norm_fn=norm_fn, indice_key='res5'),
+        )
+        
+        self.conv6 = spconv.SparseSequential(
+            # [200, 176, 6] <- [100, 88, 3]
+            block(channels[4], channels[4], spconv_kernel_sizes[3], norm_fn=norm_fn, stride=2, padding=int(spconv_kernel_sizes[3]//2), indice_key='spconv6', conv_type='spconv'),
+            SparseBasicBlock(channels[4], channels[4], norm_fn=norm_fn, indice_key='res6'),
+            SparseBasicBlock(channels[4], channels[4], norm_fn=norm_fn, indice_key='res6'),
+        )
         self.conv_out = spconv.SparseSequential(
-            spconv.SparseConv2d(
-                channels[3], out_channel, 3, stride=1, padding=1, bias=False,
-                indice_key='spconv_down2'
-            ),
+            # [200, 150, 5] -> [200, 150, 2]
+            spconv.SparseConv2d(channels[3], out_channel, 3, stride=1, padding=1, bias=False, indice_key='spconv_down2'),
             norm_fn(out_channel),
             nn.ReLU(),
         )
@@ -156,6 +164,16 @@ class VoxelResBackBone8xVoxelNeXt(nn.Module):
         return x_out
 
     def forward(self, batch_dict):
+        """
+        Args:
+            batch_dict:
+                batch_size: int
+                vfe_features: (num_voxels, C)
+                voxel_coords: (num_voxels, 4), [batch_idx, z_idx, y_idx, x_idx]
+        Returns:
+            batch_dict:
+                encoded_spconv_tensor: sparse tensor
+        """
         voxel_features, voxel_coords = batch_dict['voxel_features'], batch_dict['voxel_coords']
         batch_size = batch_dict['batch_size']
         input_sp_tensor = spconv.SparseConvTensor(
@@ -170,10 +188,16 @@ class VoxelResBackBone8xVoxelNeXt(nn.Module):
         x_conv2 = self.conv2(x_conv1)
         x_conv3 = self.conv3(x_conv2)
         x_conv4 = self.conv4(x_conv3)
+        x_conv5 = self.conv5(x_conv4)
+        x_conv6 = self.conv6(x_conv5)
 
-        # Removed conv5 and conv6
-        # Proceed directly with x_conv4
+        x_conv5.indices[:, 1:] *= 2
+        x_conv6.indices[:, 1:] *= 4
+        x_conv4 = x_conv4.replace_feature(torch.cat([x_conv4.features, x_conv5.features, x_conv6.features]))
+        x_conv4.indices = torch.cat([x_conv4.indices, x_conv5.indices, x_conv6.indices])
+
         out = self.bev_out(x_conv4)
+
         out = self.conv_out(out)
         out = self.shared_conv(out)
 
@@ -200,6 +224,8 @@ class VoxelResBackBone8xVoxelNeXt(nn.Module):
         
         return batch_dict
 
+#modified voxelnext code
+
 
 class TransformerLayer(nn.Module):
     def __init__(self, in_channels, num_heads, dim_feedforward):
@@ -221,19 +247,13 @@ class TransformerLayer(nn.Module):
         x = self.norm2(x + ffn_output)
         return x
 
-
 class EnhancedBackbone(nn.Module):
     def __init__(self, model_cfg, input_channels, grid_size, **kwargs):
         super(EnhancedBackbone, self).__init__()
         self.backbone = VoxelResBackBone8xVoxelNeXt(model_cfg, input_channels, grid_size, **kwargs)
-        # Reduced the transformer to match the new out_channel and be smaller
-        self.transformer = TransformerLayer(
-            in_channels=32,   # decreased from 128
-            num_heads=2,      # fewer heads
-            dim_feedforward=128  # reduced feed-forward size
-        )
-        self.num_point_features = 32
-
+        self.transformer = TransformerLayer(in_channels=128, num_heads=8, dim_feedforward=512)
+        self.num_point_features = self.backbone.num_point_features
+    
     def forward(self, batch_dict):
         x = self.backbone(batch_dict)
         
@@ -251,7 +271,7 @@ class EnhancedBackbone(nn.Module):
         # Reshape to [B, num_voxels, C]
         dense_features = dense_features.view(batch_size, num_voxels, in_channels)
         
-        # Transformer
+        # Transformer expects [B, N, C]
         transformed_features = self.transformer(dense_features)
         
         # Convert back to SparseConvTensor
@@ -263,5 +283,3 @@ class EnhancedBackbone(nn.Module):
         )
         
         return x
-    
-torch.cuda.empty_cache()

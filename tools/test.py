@@ -16,7 +16,8 @@ from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_f
 from pcdet.datasets import build_dataloader
 from pcdet.models import build_network
 from pcdet.utils import common_utils
-
+import json
+import matplotlib.pyplot as plt
 
 def parse_config():
     parser = argparse.ArgumentParser(description='arg parser')
@@ -56,17 +57,12 @@ def parse_config():
 
 
 def eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=False):
-    # load checkpoint
     model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test, 
                                 pre_trained_path=args.pretrained_model)
     model.cuda()
     
-    # start evaluation
-    eval_utils.eval_one_epoch(
-        cfg, args, model, test_loader, epoch_id, logger, dist_test=dist_test,
-        result_dir=eval_output_dir
-    )
-
+    # Start evaluation
+    eval_utils.eval_one_epoch(cfg, args, model, test_loader, epoch_id, logger, dist_test=dist_test, result_dir=eval_output_dir)
 
 def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
     ckpt_list = glob.glob(os.path.join(ckpt_dir, '*checkpoint_epoch_*.pth'))
@@ -87,38 +83,22 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
 
 
 def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
-    # evaluated ckpt record
     ckpt_record_file = eval_output_dir / ('eval_list_%s.txt' % cfg.DATA_CONFIG.DATA_SPLIT['test'])
     with open(ckpt_record_file, 'a'):
         pass
 
-    # tensorboard log
     if cfg.LOCAL_RANK == 0:
         tb_log = SummaryWriter(log_dir=str(eval_output_dir / ('tensorboard_%s' % cfg.DATA_CONFIG.DATA_SPLIT['test'])))
-    total_time = 0
-    first_eval = True
 
     while True:
-        # check whether there is checkpoint which is not evaluated
         cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
         if cur_epoch_id == -1 or int(float(cur_epoch_id)) < args.start_epoch:
-            wait_second = 30
-            if cfg.LOCAL_RANK == 0:
-                print('Wait %s seconds for next check (progress: %.1f / %d minutes): %s \r'
-                      % (wait_second, total_time * 1.0 / 60, args.max_waiting_mins, ckpt_dir), end='', flush=True)
-            time.sleep(wait_second)
-            total_time += 30
-            if total_time > args.max_waiting_mins * 60 and (first_eval is False):
-                break
+            time.sleep(30)
             continue
-
-        total_time = 0
-        first_eval = False
 
         model.load_params_from_file(filename=cur_ckpt, logger=logger, to_cpu=dist_test)
         model.cuda()
 
-        # start evaluation
         cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id) / cfg.DATA_CONFIG.DATA_SPLIT['test']
         tb_dict = eval_utils.eval_one_epoch(
             cfg, args, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
@@ -129,10 +109,38 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
             for key, val in tb_dict.items():
                 tb_log.add_scalar(key, val, cur_epoch_id)
 
-        # record this epoch which has been evaluated
+        # Load and plot error metrics
+        error_metrics_path = cur_result_dir / 'error_metrics.json'
+        if error_metrics_path.exists():
+            with open(error_metrics_path, 'r') as f:
+                error_metrics = json.load(f)
+            plot_error_distribution(error_metrics, cur_result_dir / 'error_distribution.png')
+            logger.info("Error distribution plot saved to %s" % (cur_result_dir / 'error_distribution.png'))
+
+        # Record evaluated checkpoint
         with open(ckpt_record_file, 'a') as f:
             print('%s' % cur_epoch_id, file=f)
         logger.info('Epoch %s has been evaluated' % cur_epoch_id)
+
+
+def plot_error_distribution(error_metrics, save_path):
+    """
+    Plots a bar chart for error distribution based on the error metrics.
+
+    Args:
+        error_metrics (dict): Dictionary containing counts of each error type.
+        save_path (str or Path): Path to save the generated plot.
+    """
+    labels = list(error_metrics.keys())
+    values = list(error_metrics.values())
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(labels, values, color='skyblue')
+    plt.title('Error Distribution')
+    plt.xlabel('Error Type')
+    plt.ylabel('Count')
+    plt.savefig(save_path)
+    plt.close()
 
 
 def main():

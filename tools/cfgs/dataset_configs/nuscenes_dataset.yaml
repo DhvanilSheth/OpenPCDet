@@ -58,6 +58,8 @@ POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
     used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
     src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+    # used_feature_list: ['x', 'y', 'z', 'intensity'],
+    # src_feature_list: ['x', 'y', 'z', 'intensity'],
 }
 
 
@@ -73,6 +75,7 @@ DATA_PROCESSOR:
 
     - NAME: transform_points_to_voxels
       VOXEL_SIZE: [0.1, 0.1, 0.2]
+      # VOXEL_SIZE: [0.2, 0.2, 0.2]
       MAX_POINTS_PER_VOXEL: 10
       MAX_NUMBER_OF_VOXELS: {
         'train': 60000,

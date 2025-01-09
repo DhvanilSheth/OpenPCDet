@@ -2,6 +2,7 @@ CLASS_NAMES: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
               'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
 
 DATA_CONFIG:
+    # _BASE_CONFIG_: tools/cfgs/dataset_configs/nuscenes_dataset.yaml
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
     POINT_CLOUD_RANGE: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
     INFO_PATH: {
@@ -14,6 +15,9 @@ DATA_CONFIG:
             - NAME: gt_sampling
               DB_INFO_PATH:
                 - nuscenes_dbinfos_10sweeps_withvelo.pkl
+              # BACKUP_DB_INFO:
+              #   DB_INFO_PATH: nuscenes_dbinfos_10sweeps_withvelo.pkl
+              #   DB_DATA_PATH: nuscenes_dbinfos_10sweeps_withvelo_global.pkl.npy
               USE_SHARED_MEMORY: False  #True  # set it to True to speed up (it costs about 15GB shared memory)
               DB_DATA_PATH:
                 - nuscenes_dbinfos_10sweeps_withvelo_global.pkl.npy
